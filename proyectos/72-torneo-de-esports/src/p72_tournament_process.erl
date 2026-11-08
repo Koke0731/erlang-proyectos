@@ -4,8 +4,8 @@
 
 -include("p72_torneo_de_esports.hrl").
 
--export([start_link/1, start_tournament/1, finish_tournament/1, cancel_tournament/1,
-         register_team/2, get_teams/1, get_state/1]).
+-export([start_link/1, start_tournament/1, finish_tournament/1, reopen_tournament/1,
+         cancel_tournament/1, register_team/2, get_teams/1, get_state/1]).
 
 -export([init/1, callback_mode/0,
          registration_open/3, in_progress/3, completed/3, cancelled/3,
@@ -20,6 +20,11 @@ start_tournament(TournamentId) ->
 
 finish_tournament(TournamentId) ->
     gen_statem:call({global, {?MODULE, TournamentId}}, finish_tournament).
+
+%% Reopen a completed tournament when a result is appealed.  The appeal keeps
+%% the tournament editable until the dispute is resolved.
+reopen_tournament(TournamentId) ->
+    gen_statem:call({global, {?MODULE, TournamentId}}, reopen_tournament).
 
 cancel_tournament(TournamentId) ->
     gen_statem:call({global, {?MODULE, TournamentId}}, cancel_tournament).
@@ -105,6 +110,9 @@ registration_open(_EventType, _EventContent, Data) ->
 in_progress({call, From}, finish_tournament, Data) ->
     reply(From, ok, completed, Data);
 
+in_progress({call, From}, reopen_tournament, Data) ->
+    reply(From, ok, in_progress, Data);
+
 in_progress({call, From}, start_tournament, Data) ->
     %% Starting an already-running tournament is safe and idempotent.
     reply(From, ok, in_progress, Data);
@@ -121,6 +129,8 @@ in_progress({call, From}, get_teams, Data) ->
 in_progress(_EventType, _EventContent, Data) ->
     {keep_state, Data}.
 
+completed({call, From}, finish_tournament, Data) -> reply(From, ok, completed, Data);
+completed({call, From}, reopen_tournament, Data) -> reply(From, ok, in_progress, Data);
 completed({call, From}, get_state, Data) -> reply(From, completed, completed, Data);
 completed({call, From}, get_teams, Data) -> reply(From, maps:values(maps:get(teams, Data)), completed, Data);
 completed(_EventType, _EventContent, Data) -> {keep_state, Data}.

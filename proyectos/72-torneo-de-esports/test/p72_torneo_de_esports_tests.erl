@@ -15,6 +15,7 @@ torneo_test_() ->
      fun stop_system/1,
      [fun supervision_tree/1,
       fun single_elimination_bracket/1,
+      fun single_elimination_completion_and_appeal/1,
       fun propagated_result_correction/1,
       fun single_elimination_byes/1,
       fun match_state_machine/1,
@@ -96,11 +97,71 @@ single_elimination_bracket_case() ->
     },
     {ok, _UpdatedBracket} = p72_bracket_server:update_match_result(
                               TournamentId, FirstMatch#match.id, Result),
+    ?assertEqual(in_progress, p72_tournament_process:get_state(TournamentId)),
     {ok, [AdvancedBracket]} = p72_bracket_server:get_bracket(TournamentId),
     NextRound = [M || M <- maps:values(AdvancedBracket#bracket.matches), M#match.round =:= 2],
     ?assert(lists:any(fun(M) ->
         M#match.team1_id =:= WinnerId orelse M#match.team2_id =:= WinnerId
     end, NextRound)).
+
+single_elimination_completion_and_appeal(_SupPid) ->
+    ?_test(single_elimination_completion_and_appeal_case()).
+
+single_elimination_completion_and_appeal_case() ->
+    {TournamentId, MatchId, Team1, Team2} =
+        start_two_team_tournament(<<"Completion and appeal test">>),
+    ?assertEqual(in_progress, p72_tournament_process:get_state(TournamentId)),
+    ok = p72_match_server:start_match(TournamentId, MatchId),
+    FirstResult = match_result(Team1, Team2, Team1),
+    {ok, _} = p72_match_server:submit_result(TournamentId, MatchId, FirstResult),
+
+    %% The final result closes the tournament automatically.
+    wait_until(fun() ->
+        case p72_tournament_registry:get_tournament(TournamentId) of
+            {ok, #tournament{state = completed}} -> true;
+            _ -> false
+        end
+    end, 100),
+    ?assertEqual(completed, p72_tournament_process:get_state(TournamentId)),
+    {ok, FinalMatch} = p72_bracket_server:get_match(TournamentId, MatchId),
+    ?assertMatch(#match{state = finished,
+                        result = #match_result{winner_team_id = Team1}},
+                 FinalMatch),
+
+    %% A conflicting report on the final is the appeal path.  It must reopen
+    %% the tournament while the dispute remains unresolved.
+    Conflicting = match_result(Team2, Team1, Team2),
+    ?assertMatch({disputed, _},
+                 p72_match_server:submit_result(TournamentId, MatchId, Conflicting)),
+    ?assertEqual(disputed, p72_match_server:get_state(TournamentId, MatchId)),
+    wait_until(fun() ->
+        case p72_tournament_registry:get_tournament(TournamentId) of
+            {ok, #tournament{state = in_progress}} -> true;
+            _ -> false
+        end
+    end, 100),
+    ?assertEqual(in_progress, p72_tournament_process:get_state(TournamentId)),
+    {ok, DisputedFinal} = p72_bracket_server:get_match(TournamentId, MatchId),
+    ?assertEqual(scheduled, DisputedFinal#match.state),
+    {ok, [Dispute]} = p72_dispute_resolver:get_open_disputes(TournamentId),
+
+    %% Resolving the appeal with the official result closes it again.
+    OfficialResult = match_result(Team1, Team2, system),
+    {ok, _Resolved, recalculated} = p72_dispute_resolver:resolve_and_recalculate(
+        TournamentId, Dispute#dispute.id, <<"Appeal reviewed">>, OfficialResult),
+    wait_until(fun() ->
+        case p72_tournament_registry:get_tournament(TournamentId) of
+            {ok, #tournament{state = completed}} -> true;
+            _ -> false
+        end
+    end, 100),
+    ?assertEqual(completed, p72_tournament_process:get_state(TournamentId)),
+    {ok, ResolvedFinal} = p72_bracket_server:get_match(TournamentId, MatchId),
+    ?assertMatch(#match{state = finished,
+                        result = #match_result{winner_team_id = Team1}},
+                 ResolvedFinal),
+    ?assertEqual(finished, p72_match_server:get_state(TournamentId, MatchId)),
+    {ok, []} = p72_dispute_resolver:get_open_disputes(TournamentId).
 
 match_state_machine(_SupPid) ->
     ?_test(match_state_machine_case()).

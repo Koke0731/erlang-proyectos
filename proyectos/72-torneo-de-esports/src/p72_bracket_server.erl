@@ -132,8 +132,10 @@ handle_call({update_match_result, MatchId, Result}, _From, State) ->
                                                 UpdatedBracket, MatchId, Result),
                                             NewBrackets = maps:put(
                                                 BracketId, PropagatedBracket, maps:get(brackets, State)),
+                                            NewState = State#{brackets => NewBrackets},
                                             {reply, {ok, PropagatedBracket},
-                                             State#{brackets => NewBrackets}}
+                                             maybe_complete_single_elimination(
+                                                 PropagatedBracket, NewState)}
                                     end
                             end;
                         error -> {reply, {error, match_not_found}, State}
@@ -190,7 +192,13 @@ handle_call(recalculate_bracket, _From, State) ->
                 Brackets
             )
     end,
-    NewState = State#{brackets => NewBrackets},
+    NewState0 = State#{brackets => NewBrackets},
+    NewState = maps:fold(
+        fun(_BracketId, Bracket, AccState) ->
+            maybe_complete_single_elimination(Bracket, AccState)
+        end,
+        NewState0,
+        NewBrackets),
     {reply, {ok, NewBrackets}, NewState}.
 
 handle_cast({match_finished, MatchId, Result}, State) ->
@@ -221,7 +229,9 @@ handle_cast({match_finished, MatchId, Result}, State) ->
                                     maybe_create_grand_final(State0#{brackets => NewBrackets2});
                                 _ ->
                                     Propagated = propagate_result(UpdatedBracket, MatchId, Result),
-                                    State0#{brackets => maps:put(BracketId, Propagated, NewBrackets1)}
+                                    NewState = State0#{brackets => maps:put(
+                                        BracketId, Propagated, NewBrackets1)},
+                                    maybe_complete_single_elimination(Propagated, NewState)
                             end,
                             {noreply, State1};
                         error -> {noreply, State}
@@ -247,7 +257,10 @@ handle_cast({match_disputed, MatchId}, State) ->
                     recalculate_double_elim_full(maps:put(BracketId, UpdatedBracket, Brackets));
                 _ -> maps:put(BracketId, UpdatedBracket, Brackets)
             end,
-            {noreply, State#{brackets => NewBrackets}};
+            NewState = State#{brackets => NewBrackets},
+            %% An appeal on the final match must reopen a completed tournament;
+            %% otherwise the resolution could no longer change the official state.
+            {noreply, reopen_tournament_if_completed(Match#match.tournament_id, NewState)};
         error -> {noreply, State}
     end;
 handle_cast(_Msg, State) -> {noreply, State}.
@@ -951,6 +964,34 @@ maybe_create_grand_final_reset(State, #match{} = GrandFinal, #match_result{} = R
         false -> complete_tournament(GrandFinal#match.tournament_id, State)
     end;
 maybe_create_grand_final_reset(State, _Match, _Result) -> State.
+
+maybe_complete_single_elimination(
+        #bracket{format = single_elim, tournament_id = TournamentId} = Bracket, State)
+  when is_integer(TournamentId) ->
+    case {final_winner(Bracket), has_disputed_matches(Bracket)} of
+        {{ok, _Winner}, false} -> complete_tournament(TournamentId, State);
+        _ -> State
+    end;
+maybe_complete_single_elimination(_Bracket, State) ->
+    State.
+
+has_disputed_matches(Bracket) ->
+    lists:any(fun(M) -> M#match.state =:= disputed end,
+              maps:values(Bracket#bracket.matches)).
+
+reopen_tournament_if_completed(TournamentId, State) ->
+    case catch p72_tournament_process:get_state(TournamentId) of
+        completed ->
+            _ = catch p72_tournament_process:reopen_tournament(TournamentId),
+            _ = catch p72_tournament_registry:update_tournament(
+                TournamentId,
+                fun(Tournament) ->
+                    Tournament#tournament{state = in_progress, finished_at = undefined}
+                end),
+            State;
+        _ ->
+            State
+    end.
 
 complete_tournament(TournamentId, State) ->
     _ = catch p72_tournament_process:finish_tournament(TournamentId),
