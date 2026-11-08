@@ -1,8 +1,26 @@
 {application, p72_torneo_de_esports, [
-  {description, "Torneo de esports"},
-  {vsn, "0.1.0"},
-  {registered, [p72_torneo_de_esports_sup, p72_torneo_de_esports_server]},
-  {mod, {p72_torneo_de_esports_app, []}},
-  {applications, [kernel, stdlib, cowboy, recon]},
-  {env, []}
+{description, "Torneo de esports - Erlang/OTP system for tournament brackets, matches, and live scores"},
+{vsn, "0.1.0"},
+{registered, [p72_torneo_de_esports_sup, p72_tournament_registry, p72_metrics_collector]},
+{mod, {p72_torneo_de_esports_app, []}},
+{applications, [kernel, stdlib, cowboy, recon, jiffy]},
+{env, []},
+{modules, [
+    p72_torneo_de_esports_app,
+    p72_torneo_de_esports_sup,
+    p72_tournament_registry,
+    p72_tournament_sup,
+    p72_bracket_server,
+    p72_match_sup,
+    p72_match_server,
+    p72_live_score_server,
+    p72_tournament_process,
+    p72_dispute_resolver,
+    p72_metrics_collector,
+    p72_http_server,
+    p72_http_handler,
+    p72_ws_handler
+]},
+{licenses, ["MIT"]},
+{links, [{"GitHub", "https://github.com/tectijuana/erlang-proyectos"}]}
 ]}.
