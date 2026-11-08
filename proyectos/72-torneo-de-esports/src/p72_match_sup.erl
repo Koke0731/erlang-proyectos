@@ -4,7 +4,7 @@
 
 -include("p72_torneo_de_esports.hrl").
 
--export([start_link/1, start_match/3, stop_match/1, get_match_pid/1,
+-export([start_link/1, start_match/3, stop_match/2, get_match_pid/2,
          assign_table/4, assign_referee/4, release_table/3, release_referee/3,
          is_table_free/3, is_referee_free/3, release_resources/4]).
 
@@ -49,7 +49,8 @@ start_match_with_resources(TournamentId, MatchId, MatchData, SupId, Round, Table
     case reserve_resources(TournamentId, Round, MatchId, TableId, RefereeId) of
         ok ->
             ChildSpec = #{id => MatchId,
-                          start => {p72_match_server, start_link, [MatchId, MatchData]},
+                          start => {p72_match_server, start_link,
+                                    [TournamentId, MatchId, MatchData]},
                           restart => transient,
                           shutdown => 5000,
                           type => worker,
@@ -86,15 +87,14 @@ reserve_referee(_TournamentId, _Round, _MatchId, undefined) -> ok;
 reserve_referee(TournamentId, Round, MatchId, RefereeId) ->
     assign_referee(TournamentId, Round, RefereeId, MatchId).
 
-stop_match(MatchId) ->
-    %% Find which tournament supervisor owns this match
-    %% For simplicity, we iterate - in production use a registry
-    {ok, Pid} = get_match_pid(MatchId),
+stop_match(TournamentId, MatchId) ->
+    {ok, Pid} = get_match_pid(TournamentId, MatchId),
     exit(Pid, shutdown).
 
-get_match_pid(MatchId) ->
-    %% This is a simplified lookup - in production use gproc or pg
-    case global:whereis_name({p72_match_server, MatchId}) of
+get_match_pid(TournamentId, MatchId) ->
+    %% Match IDs are only unique inside a tournament, so the lookup key must
+    %% include the tournament ID.
+    case global:whereis_name({p72_match_server, TournamentId, MatchId}) of
         undefined -> {error, not_found};
         Pid -> {ok, Pid}
     end.

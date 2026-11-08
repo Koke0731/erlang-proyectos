@@ -261,7 +261,7 @@ handle_submit_result(Req, TournamentId, MatchId) ->
                 {ok, Match} ->
                     case ensure_match_started(TId, MId, Match) of
                         ok ->
-                            case p72_match_server:submit_result(MId, Result) of
+                            case p72_match_server:submit_result(TId, MId, Result) of
                                 {ok, _} -> json_reply(200, Req, #{status => <<"updated">>});
                                 {disputed, DisputeResult} ->
                                     json_reply(202, Req, #{status => <<"disputed">>,
@@ -284,7 +284,7 @@ handle_start_match(Req, TournamentId, MatchId) ->
           when is_integer(Team1), is_integer(Team2) ->
             case ensure_match_process(TId, MId, Match) of
                 ok ->
-                    try p72_match_server:start_match(MId) of
+                    try p72_match_server:start_match(TId, MId) of
                         ok -> json_reply(200, Req, #{status => <<"started">>});
                         {error, Reason} -> json_reply(400, Req, #{error => Reason})
                     catch
@@ -297,7 +297,7 @@ handle_start_match(Req, TournamentId, MatchId) ->
     end.
 
 ensure_match_process(TournamentId, MatchId, Match) ->
-    case p72_match_sup:get_match_pid(MatchId) of
+    case p72_match_sup:get_match_pid(TournamentId, MatchId) of
         {ok, _Pid} -> ok;
         {error, not_found} ->
             case p72_match_sup:start_match(TournamentId, MatchId, Match) of
@@ -310,8 +310,8 @@ ensure_match_process(TournamentId, MatchId, Match) ->
 ensure_match_started(TournamentId, MatchId, Match) ->
     case ensure_match_process(TournamentId, MatchId, Match) of
         ok ->
-            case p72_match_server:get_state(MatchId) of
-                scheduled -> p72_match_server:start_match(MatchId);
+            case p72_match_server:get_state(TournamentId, MatchId) of
+                scheduled -> p72_match_server:start_match(TournamentId, MatchId);
                 in_play -> ok;
                 finished -> ok;
                 disputed -> ok;
@@ -343,7 +343,7 @@ handle_submit_dispute(Req, TournamentId, MatchId) ->
                         true ->
                             case ensure_match_process(TId, MId, Match) of
                                 ok ->
-                                    case p72_match_server:mark_disputed(MId, ReasonText) of
+                                    case p72_match_server:mark_disputed(TId, MId, ReasonText) of
                                         ok ->
                                             case p72_dispute_resolver:submit_dispute(TId, MId, DisputeData) of
                                                 {ok, Dispute} -> json_reply(201, Req, dispute_to_json(Dispute));
@@ -428,7 +428,7 @@ handle_disqualify_team(Req, TournamentId, MatchId, DefaultReason) ->
                 {ok, Match} ->
                     case ensure_match_process(TId, MId, Match) of
                         ok ->
-                            case p72_match_server:disqualify_team(MId, DisqualifiedTeamId, Reason) of
+                            case p72_match_server:disqualify_team(TId, MId, DisqualifiedTeamId, Reason) of
                                 {ok, Result} -> json_reply(200, Req, #{status => <<"disqualified">>, result => result_to_json(Result)});
                                 {error, ErrorReason} -> json_reply(409, Req, #{error => ErrorReason})
                             end;

@@ -120,7 +120,7 @@ handle_call({resolve_and_recalculate, DisputeId, Resolution, OfficialResult}, _F
         {ok, Dispute} ->
             TournamentId = maps:get(tournament_id, State),
             MatchId = Dispute#dispute.match_id,
-            case p72_match_server:resolve_dispute(MatchId, OfficialResult) of
+            case p72_match_server:resolve_dispute(TournamentId, MatchId, OfficialResult) of
                 {ok, _ResolvedResult} ->
                     ResolvedDispute = Dispute#dispute{
                         status = resolved,

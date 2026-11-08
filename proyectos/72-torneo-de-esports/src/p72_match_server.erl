@@ -4,9 +4,9 @@
 
 -include("p72_torneo_de_esports.hrl").
 
--export([start_link/2, submit_result/2, start_match/1, pause_match/1, resume_match/1,
-         cancel_match/1, get_state/1, get_data/1, disqualify_team/3,
-         resolve_dispute/2, mark_disputed/2]).
+-export([start_link/3, submit_result/3, start_match/2, pause_match/2, resume_match/2,
+         cancel_match/2, get_state/2, get_data/2, disqualify_team/4,
+         resolve_dispute/3, mark_disputed/3]).
 
 -export([init/1, callback_mode/0,
          scheduled/3, in_play/3, finished/3, disputed/3, cancelled/3, walkover/3, disqualified/3,
@@ -15,45 +15,56 @@
 -define(STATES, [scheduled, in_play, finished, disputed, cancelled, walkover, disqualified]).
 
 %% API
-start_link(MatchId, MatchData) ->
-    gen_statem:start_link({global, {?MODULE, MatchId}}, ?MODULE, [MatchId, MatchData], []).
+start_link(TournamentId, MatchId, MatchData) ->
+    gen_statem:start_link(server_name(TournamentId, MatchId), ?MODULE,
+                          [TournamentId, MatchId, MatchData], []).
 
-submit_result(MatchId, Result) ->
-    gen_statem:call({global, {?MODULE, MatchId}}, {submit_result, Result}).
+submit_result(TournamentId, MatchId, Result) ->
+    gen_statem:call(server_name(TournamentId, MatchId), {submit_result, Result}).
 
-start_match(MatchId) ->
-    gen_statem:call({global, {?MODULE, MatchId}}, start_match).
+start_match(TournamentId, MatchId) ->
+    gen_statem:call(server_name(TournamentId, MatchId), start_match).
 
-pause_match(MatchId) ->
-    gen_statem:call({global, {?MODULE, MatchId}}, pause_match).
+pause_match(TournamentId, MatchId) ->
+    gen_statem:call(server_name(TournamentId, MatchId), pause_match).
 
-resume_match(MatchId) ->
-    gen_statem:call({global, {?MODULE, MatchId}}, resume_match).
+resume_match(TournamentId, MatchId) ->
+    gen_statem:call(server_name(TournamentId, MatchId), resume_match).
 
-cancel_match(MatchId) ->
-    gen_statem:call({global, {?MODULE, MatchId}}, cancel_match).
+cancel_match(TournamentId, MatchId) ->
+    gen_statem:call(server_name(TournamentId, MatchId), cancel_match).
 
-get_state(MatchId) ->
-    gen_statem:call({global, {?MODULE, MatchId}}, get_state).
+get_state(TournamentId, MatchId) ->
+    gen_statem:call(server_name(TournamentId, MatchId), get_state).
 
-get_data(MatchId) ->
-    gen_statem:call({global, {?MODULE, MatchId}}, get_data).
+get_data(TournamentId, MatchId) ->
+    gen_statem:call(server_name(TournamentId, MatchId), get_data).
 
-disqualify_team(MatchId, DisqualifiedTeamId, Reason) ->
-    gen_statem:call({global, {?MODULE, MatchId}}, {disqualify, DisqualifiedTeamId, Reason}).
+disqualify_team(TournamentId, MatchId, DisqualifiedTeamId, Reason) ->
+    gen_statem:call(server_name(TournamentId, MatchId),
+                    {disqualify, DisqualifiedTeamId, Reason}).
 
-resolve_dispute(MatchId, Result) ->
-    gen_statem:call({global, {?MODULE, MatchId}}, {resolve_dispute, Result}).
+resolve_dispute(TournamentId, MatchId, Result) ->
+    gen_statem:call(server_name(TournamentId, MatchId), {resolve_dispute, Result}).
 
-mark_disputed(MatchId, Reason) ->
-    gen_statem:call({global, {?MODULE, MatchId}}, {mark_disputed, Reason}).
+mark_disputed(TournamentId, MatchId, Reason) ->
+    gen_statem:call(server_name(TournamentId, MatchId), {mark_disputed, Reason}).
+
+%% Match processes are scoped by tournament because match IDs are only unique
+%% inside each tournament bracket.
+server_name(TournamentId, MatchId) ->
+    {global, {?MODULE, TournamentId, MatchId}}.
 
 %% Callbacks
 callback_mode() -> state_functions.
 
-init([MatchId, MatchData]) ->
-    logger:info("~s iniciado para partida ~p", [?MODULE, MatchId]),
-    Data = MatchData#match{started_at = undefined, finished_at = undefined},
+init([TournamentId, MatchId, MatchData]) ->
+    logger:info("~s iniciado para torneo ~p, partida ~p",
+                [?MODULE, TournamentId, MatchId]),
+    Data = MatchData#match{tournament_id = TournamentId,
+                           id = MatchId,
+                           started_at = undefined,
+                           finished_at = undefined},
     {ok, scheduled, Data}.
 
 %% State functions

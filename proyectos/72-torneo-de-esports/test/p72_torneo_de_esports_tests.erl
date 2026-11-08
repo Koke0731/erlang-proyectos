@@ -18,6 +18,7 @@ torneo_test_() ->
       fun propagated_result_correction/1,
       fun single_elimination_byes/1,
       fun match_state_machine/1,
+      fun multiple_tournaments_same_match_id/1,
       fun conflicting_reports_and_adjudication/1,
       fun disqualification_advances_opponent/1,
       fun double_elimination_reset/1,
@@ -129,9 +130,9 @@ match_state_machine_case() ->
     {ok, _ViewerId} = p72_live_score_server:subscribe(TournamentId, self()),
     receive {tournament_state, _} -> ok after 1000 -> ?assert(false) end,
     {ok, _Pid} = p72_match_sup:start_match(TournamentId, MatchId, Match),
-    ?assertEqual(scheduled, p72_match_server:get_state(MatchId)),
-    ?assertEqual(ok, p72_match_server:start_match(MatchId)),
-    ?assertEqual(in_play, p72_match_server:get_state(MatchId)),
+    ?assertEqual(scheduled, p72_match_server:get_state(TournamentId, MatchId)),
+    ?assertEqual(ok, p72_match_server:start_match(TournamentId, MatchId)),
+    ?assertEqual(in_play, p72_match_server:get_state(TournamentId, MatchId)),
     Result = #match_result{
         winner_team_id = 11,
         loser_team_id = 22,
@@ -141,13 +142,43 @@ match_state_machine_case() ->
         disputed = false,
         dispute_reason = undefined
     },
-    ?assertMatch({ok, _}, p72_match_server:submit_result(MatchId, Result)),
-    ?assertEqual(finished, p72_match_server:get_state(MatchId)),
+    ?assertMatch({ok, _}, p72_match_server:submit_result(TournamentId, MatchId, Result)),
+    ?assertEqual(finished, p72_match_server:get_state(TournamentId, MatchId)),
     receive
         {match_finished, MatchId, Result} -> ok
     after 1000 -> ?assert(false)
     end,
     ?assert(is_pid(global:whereis_name({p72_live_score_server, TournamentId}))).
+
+multiple_tournaments_same_match_id(_SupPid) ->
+    ?_test(multiple_tournaments_same_match_id_case()).
+
+multiple_tournaments_same_match_id_case() ->
+    {Tournament1, Match1, Team1A, Team1B} =
+        start_two_team_tournament(<<"Same match id A">>),
+    {Tournament2, Match2, Team2A, Team2B} =
+        start_two_team_tournament(<<"Same match id B">>),
+    ?assertEqual(1, Match1),
+    ?assertEqual(1, Match2),
+    ?assertNotEqual(Tournament1, Tournament2),
+    {ok, Pid1} = p72_match_sup:get_match_pid(Tournament1, Match1),
+    {ok, Pid2} = p72_match_sup:get_match_pid(Tournament2, Match2),
+    ?assertNotEqual(Pid1, Pid2),
+    Data1 = p72_match_server:get_data(Tournament1, Match1),
+    Data2 = p72_match_server:get_data(Tournament2, Match2),
+    ?assertEqual(Tournament1, Data1#match.tournament_id),
+    ?assertEqual(Tournament2, Data2#match.tournament_id),
+    ?assertEqual(Match1, Data1#match.id),
+    ?assertEqual(Match2, Data2#match.id),
+    ok = p72_match_server:start_match(Tournament1, Match1),
+    ok = p72_match_server:start_match(Tournament2, Match2),
+    {ok, _} = p72_match_server:submit_result(
+        Tournament1, Match1, match_result(Team1A, Team1B, Team1A)),
+    ?assertEqual(finished, p72_match_server:get_state(Tournament1, Match1)),
+    ?assertEqual(in_play, p72_match_server:get_state(Tournament2, Match2)),
+    {ok, _} = p72_match_server:submit_result(
+        Tournament2, Match2, match_result(Team2A, Team2B, Team2A)),
+    ?assertEqual(finished, p72_match_server:get_state(Tournament2, Match2)).
 
 single_elimination_byes(_SupPid) ->
     ?_test(single_elimination_byes_case()).
@@ -201,18 +232,18 @@ conflicting_reports_and_adjudication(_SupPid) ->
 
 conflicting_reports_and_adjudication_case() ->
     {TournamentId, MatchId, Team1, Team2} = start_two_team_tournament(<<"Conflict test">>),
-    ok = p72_match_server:start_match(MatchId),
+    ok = p72_match_server:start_match(TournamentId, MatchId),
     FirstResult = match_result(Team1, Team2, Team1),
-    ?assertMatch({ok, _}, p72_match_server:submit_result(MatchId, FirstResult)),
+    ?assertMatch({ok, _}, p72_match_server:submit_result(TournamentId, MatchId, FirstResult)),
     Conflicting = match_result(Team2, Team1, Team2),
-    ?assertMatch({disputed, _}, p72_match_server:submit_result(MatchId, Conflicting)),
-    ?assertEqual(disputed, p72_match_server:get_state(MatchId)),
+    ?assertMatch({disputed, _}, p72_match_server:submit_result(TournamentId, MatchId, Conflicting)),
+    ?assertEqual(disputed, p72_match_server:get_state(TournamentId, MatchId)),
     {ok, [Dispute]} = p72_dispute_resolver:get_open_disputes(TournamentId),
     ?assertEqual(Team2, Dispute#dispute.claimed_winner),
     OfficialResult = match_result(Team2, Team1, system),
     {ok, _Resolved, recalculated} = p72_dispute_resolver:resolve_and_recalculate(
         TournamentId, Dispute#dispute.id, <<"Evidence reviewed">>, OfficialResult),
-    ?assertEqual(finished, p72_match_server:get_state(MatchId)),
+    ?assertEqual(finished, p72_match_server:get_state(TournamentId, MatchId)),
     wait_until(fun() ->
         case p72_bracket_server:get_match(TournamentId, MatchId) of
             {ok, #match{state = finished, result = #match_result{winner_team_id = Team2}}} -> true;
@@ -232,7 +263,7 @@ disqualification_advances_opponent_case() ->
     [Match | _] = [M || M <- maps:values(Bracket#bracket.matches), M#match.round =:= 1],
     DQTeam = Match#match.team1_id,
     AdvancingTeam = Match#match.team2_id,
-    {ok, _Result} = p72_match_server:disqualify_team(Match#match.id, DQTeam, <<"No-show">>),
+    {ok, _Result} = p72_match_server:disqualify_team(TournamentId, Match#match.id, DQTeam, <<"No-show">>),
     wait_until(fun() ->
         {ok, [B]} = p72_bracket_server:get_bracket(TournamentId),
         lists:any(fun(Next) ->
@@ -300,10 +331,10 @@ match_process_restarts(_SupPid) ->
 
 match_process_restarts_case() ->
     {TournamentId, MatchId, _Team1, _Team2} = start_two_team_tournament(<<"Restart test">>),
-    {ok, OldPid} = p72_match_sup:get_match_pid(MatchId),
+    {ok, OldPid} = p72_match_sup:get_match_pid(TournamentId, MatchId),
     exit(OldPid, kill),
     wait_until(fun() ->
-        case p72_match_sup:get_match_pid(MatchId) of
+        case p72_match_sup:get_match_pid(TournamentId, MatchId) of
             {ok, NewPid} -> NewPid =/= OldPid;
             _ -> false
         end
