@@ -74,6 +74,7 @@ scheduled({call, From}, {submit_result, _Result}, Data) ->
     reply(From, {error, invalid_state}, scheduled, Data);
 
 scheduled({call, From}, start_match, Data) ->
+    p72_metrics_collector:record_match_start({Data#match.tournament_id, Data#match.id}),
     reply(From, ok, in_play, Data#match{state = in_play, started_at = erlang:system_time(second)});
 
 scheduled({call, From}, {mark_disputed, Reason}, Data) ->
@@ -107,6 +108,7 @@ scheduled({call, From}, {disqualify, DisqualifiedTeamId, Reason}, Data) ->
                 result = Result,
                 finished_at = erlang:system_time(second)
             },
+            p72_metrics_collector:record_match_finish({Data#match.tournament_id, Data#match.id}),
             notify_result(Data#match.tournament_id, Data#match.id, Result),
             reply(From, {ok, Result}, disqualified, NewData)
     end;
@@ -138,6 +140,7 @@ in_play({call, From}, {submit_result, Result}, Data) ->
                         result = ValidatedResult,
                         finished_at = erlang:system_time(second)
                     },
+                    p72_metrics_collector:record_match_finish({Data#match.tournament_id, Data#match.id}),
                     %% Notify bracket server and live score
                     notify_result(Data#match.tournament_id, Data#match.id, ValidatedResult),
                     reply(From, {ok, ValidatedResult}, finished, NewData)
@@ -186,6 +189,7 @@ in_play({call, From}, {disqualify, DisqualifiedTeamId, Reason}, Data) ->
                 result = Result,
                 finished_at = erlang:system_time(second)
             },
+            p72_metrics_collector:record_match_finish({Data#match.tournament_id, Data#match.id}),
             notify_result(Data#match.tournament_id, Data#match.id, Result),
             reply(From, {ok, Result}, disqualified, NewData)
     end;
@@ -256,6 +260,7 @@ disputed({call, From}, {resolve_dispute, Result}, Data) ->
                 result = ValidatedResult#match_result{disputed = false, dispute_reason = undefined},
                 finished_at = erlang:system_time(second)
             },
+            p72_metrics_collector:record_match_finish({Data#match.tournament_id, Data#match.id}),
             notify_result(Data#match.tournament_id, Data#match.id, NewData#match.result),
             reply(From, {ok, NewData#match.result}, finished, NewData);
         {error, Reason} ->
@@ -321,6 +326,7 @@ handle_common_events({info, {disqualify, DisqualifiedTeamId, Reason}}, _Content,
                 result = Result,
                 finished_at = erlang:system_time(second)
             },
+            p72_metrics_collector:record_match_finish({Data#match.tournament_id, Data#match.id}),
             notify_result(Data#match.tournament_id, Data#match.id, Result),
             {next_state, disqualified, NewData}
     end;
@@ -389,6 +395,7 @@ notify_result(TournamentId, MatchId, Result) ->
 register_conflicting_result(Data, DisputeResult) ->
     TournamentId = Data#match.tournament_id,
     MatchId = Data#match.id,
+    p72_metrics_collector:record_match_disputed({TournamentId, MatchId}),
     gen_server:cast({global, {p72_bracket_server, TournamentId}},
                     {match_disputed, MatchId}),
     case global:whereis_name({p72_dispute_resolver, TournamentId}) of
@@ -420,6 +427,7 @@ reply(From, ReplyValue, StateName, Data) ->
 transition_to_disputed(From, Reason, Data, _CurrentState) ->
     TournamentId = Data#match.tournament_id,
     MatchId = Data#match.id,
+    p72_metrics_collector:record_match_disputed({TournamentId, MatchId}),
     gen_server:cast({global, {p72_bracket_server, TournamentId}}, {match_disputed, MatchId}),
     gen_server:cast({global, {p72_live_score_server, TournamentId}},
                     {match_status, MatchId, disputed, Reason}),
