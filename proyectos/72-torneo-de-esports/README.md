@@ -45,22 +45,99 @@ La generación y el avance verificados corresponden a eliminación simple y dobl
 - `bo3` - Best of 3
 - `bo5` - Best of 5
 
-## Instalación y Ejecución
+## Cómo ejecutar el proyecto (guía rápida)
+
+### Requisitos
+
+| Herramienta | Versión | Comprobación |
+|---|---|---|
+| Erlang/OTP | 26 o superior | `erl -version` |
+| rebar3 | 3.22 o superior | `rebar3 version` |
+| git | reciente | `git --version` |
+| curl | opcional (probar la API) | `curl --version` |
+
+En Ubuntu 22.04/24.04, la forma más directa de tener OTP 26 es [kerl](https://github.com/kerl/kerl) (así se aprovisionó la instancia del proyecto) o los paquetes de [Erlang Solutions](https://www.erlang-solutions.com/downloads/). El proyecto no necesita base de datos: todo el estado vive en memoria.
+
+### 1. Clonar el repositorio
 
 ```bash
-# Compilar
-rebar3 compile
-
-# Tests
-rebar3 eunit
-
-# Shell interactivo
-rebar3 shell
-
-# Release de producción
-rebar3 as prod release
-_build/prod/rel/p72_torneo_de_esports/bin/p72_torneo_de_esports start
+git clone https://github.com/Koke0731/erlang-proyectos.git
+cd erlang-proyectos/proyectos/72-torneo-de-esports
 ```
+
+La implementación del proyecto está en la rama `feature/72-torneo-implementacion`.
+
+### 2. Compilar
+
+```bash
+rebar3 compile
+```
+
+### 3. Ejecutar las pruebas
+
+```bash
+rebar3 eunit     # 17 pruebas
+rebar3 xref      # referencias cruzadas
+```
+
+### 4. Arrancar en desarrollo
+
+```bash
+rebar3 shell
+```
+
+La aplicación escucha en el puerto **8080** (se define en `config/sys.config`). Con ella iniciada:
+
+| Recurso | URL |
+|---|---|
+| Dashboard | <http://localhost:8080/> |
+| Health check | <http://localhost:8080/health> |
+| API de torneos | <http://localhost:8080/api/torneos> |
+| Métricas | <http://localhost:8080/metrics> |
+
+Para salir de la shell de Erlang: `q().`
+
+### 5. Arrancar como release (sin shell)
+
+```bash
+rebar3 as prod release
+_build/prod/rel/p72_torneo_de_esports/bin/p72_torneo_de_esports foreground
+```
+
+En segundo plano usa `daemon` en lugar de `foreground`. Para detenerlo:
+
+```bash
+_build/prod/rel/p72_torneo_de_esports/bin/p72_torneo_de_esports stop
+```
+
+### 6. Verificar que responde
+
+```bash
+curl -s http://localhost:8080/health
+# {"timestamp":1794344628,"status":"ok"}
+
+curl -s http://localhost:8080/api/torneos
+# {"tournaments":[]}
+```
+
+### 7. Servicio systemd (instancia del proyecto)
+
+En la VM del proyecto el release está instalado como servicio:
+
+```bash
+sudo systemctl status p72-esports
+sudo systemctl restart p72-esports
+sudo journalctl -u p72-esports -f
+```
+
+### Problemas comunes
+
+| Síntoma | Causa / solución |
+|---|---|
+| `rebar3: command not found` | añade rebar3 al `PATH` o instálalo desde <https://rebar3.org/> |
+| `eaddrinuse` / puerto ocupado | algo usa el 8080: `ss -ltnp \| grep 8080`; cambia `http_port` en `config/sys.config` |
+| El dashboard carga pero la API falla | revisa `journalctl -u p72-esports` o la consola de Erlang |
+| Los cambios no aparecen | recompila con `rebar3 compile` y reinicia el release o el servicio |
 
 ## Frontend
 
