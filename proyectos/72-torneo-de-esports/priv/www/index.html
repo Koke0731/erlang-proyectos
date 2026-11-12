@@ -55,6 +55,19 @@
     .item + .item { margin-top: 10px; }
     .item p { margin: 8px 0 0; color: #aab2cc; font-size: 13px; line-height: 1.5; }
     .subheading { margin: 22px 0 12px; color: #b5bdd5; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; }
+    .bracket-card { display: grid; gap: 18px; }
+    .bracket-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .bracket-rounds { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+    .bracket-round { border: 1px solid #2a304b; border-radius: 11px; padding: 12px; background: #0e1425; }
+    .bracket-round .round-head { margin: 0 0 10px; font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: #a5b4fc; }
+    .bracket-round .round-matches { display: grid; gap: 10px; }
+    .match-card { padding: 12px; border: 1px solid #333a58; border-radius: 10px; background: #13182a; }
+    .match-card.winner { border-color: #2f9e6e; background: #12251d; }
+    .match-card .match-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .match-card .match-title { font-weight: 800; color: #f2f4ff; font-size: 14px; }
+    .match-card .match-meta { margin-top: 6px; color: #aab2cc; font-size: 12px; }
+    .match-card .match-score { margin-top: 8px; color: #9bf0c1; font-size: 12px; font-weight: 700; }
+    .bracket-foot { margin: 0; color: #98a2c3; font-size: 12px; }
     pre { max-height: 320px; overflow: auto; padding: 14px; border-radius: 10px; color: #aee9d0; background: #080c16; white-space: pre-wrap; }
     @media (max-width: 780px) { .grid { grid-template-columns: 1fr; } main { padding-top: 36px; } header { height: 66px; } }
   </style>
@@ -287,6 +300,24 @@
       await loadLedger();
     }
 
+    function renderMatchCard(m) {
+      const card = document.createElement('article'); card.className = 'item match-card';
+      const head = document.createElement('div'); head.className = 'match-head';
+      const title = document.createElement('span'); title.className = 'match-title'; title.textContent = `R${m.round}.${m.position} · ${teamName(m.team1_id)} vs ${teamName(m.team2_id)}`;
+      const state = document.createElement('span'); state.className = 'badge'; state.textContent = stateNames[m.state] || m.state;
+      head.append(title, state);
+      const meta = document.createElement('p'); meta.className = 'match-meta'; meta.textContent = `${m.format.toUpperCase()} · ${matchScore(m)}`;
+      card.append(head, meta);
+      if (m.result) {
+        const winnerId = m.result.winner_team_id;
+        const winTitle = document.createElement('p'); winTitle.className = 'match-score';
+        winTitle.textContent = winnerId == null ? 'Resultado registrado.' : `${teamName(winnerId)} avanza a la siguiente ronda.`;
+        card.append(winTitle);
+        if (winnerId != null) card.classList.add('winner');
+      }
+      return card;
+    }
+
     async function loadBrackets() {
       const root = $('#brackets'); root.replaceChildren(empty('Cargando brackets…'));
       try {
@@ -294,12 +325,29 @@
         root.replaceChildren();
         if (!brackets.length) root.append(empty('El torneo aún no tiene brackets. Registra equipos y pulsa Iniciar torneo.'));
         brackets.forEach(b => {
-          const panel = item(`${b.name} · ${formatNames[b.format] || b.format}`, `Ronda ${b.current_round} de ${b.total_rounds}`);
-          (b.matches || []).sort((a, c) => a.round - c.round || a.position - c.position).forEach(m => {
-            const t1 = teamName(m.team1_id), t2 = teamName(m.team2_id);
-            panel.append(item(`R${m.round}.${m.position} · ${t1} vs ${t2}`, `${stateNames[m.state] || m.state} · ${m.format.toUpperCase()} · ${matchScore(m)}`));
+          const card = document.createElement('article'); card.className = 'item bracket-card';
+          const top = document.createElement('div'); top.className = 'bracket-card-top';
+          const title = document.createElement('strong'); title.textContent = `${b.name} · ${formatNames[b.format] || b.format}`;
+          const status = document.createElement('span'); status.className = 'badge'; status.textContent = `Ronda ${b.current_round} de ${b.total_rounds}`;
+          top.append(title, status);
+          const rounds = document.createElement('div'); rounds.className = 'bracket-rounds';
+          const groups = new Map();
+          (b.matches || []).forEach(m => { const key = m.round; if (!groups.has(key)) groups.set(key, []); groups.get(key).push(m); });
+          [...groups.entries()].sort((x, y) => x[0] - y[0]).forEach(([round, list]) => {
+            const col = document.createElement('div'); col.className = 'bracket-round';
+            const head = document.createElement('h3'); head.className = 'round-head'; head.textContent = `Ronda ${round}`;
+            const matchesDiv = document.createElement('div'); matchesDiv.className = 'round-matches';
+            list.sort((a, c) => a.position - c.position).forEach(m => matchesDiv.append(renderMatchCard(m)));
+            col.append(head, matchesDiv);
+            rounds.append(col);
           });
-          root.append(panel);
+          if (!rounds.children.length) {
+            const emptyN = document.createElement('div'); emptyN.className = 'empty'; emptyN.textContent = 'Sin partidas en este bracket.';
+            rounds.append(emptyN);
+          }
+          const foot = document.createElement('p'); foot.className = 'bracket-foot'; foot.textContent = `Partidas registradas: ${(b.matches || []).length}`;
+          card.append(top, rounds, foot);
+          root.append(card);
         });
         matches = brackets.flatMap(b => b.matches || []);
         fillMatchSelect();
